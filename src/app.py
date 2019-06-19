@@ -12,15 +12,37 @@ import requests
 import torch
 import json
 
+
+export_file_url = 'https://drive.google.com/uc?export=download&id=1lh7uMHUvqWSW9aRTRtQcZFgFWotTJOrU'
+export_file_name = 'export.pkl'
+
 with open("src/config.yaml", 'r') as stream:
     APP_CONFIG = yaml.load(stream)
 
 app = Flask(__name__)
 
 
-def load_model(path=".", model_name="model.pkl"):
-    learn = load_learner(path, fname=model_name)
-    return learn
+async def download_file(url, dest):
+    if dest.exists(): return
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            data = await response.read()
+            with open(dest, 'wb') as f:
+                f.write(data)
+
+
+async def setup_learner():
+    await download_file(export_file_url, path / export_file_name)
+    try:
+        learn = load_learner(path, export_file_name)
+        return learn
+    except RuntimeError as e:
+        if len(e.args) > 0 and 'CPU-only machine' in e.args[0]:
+            print(e)
+            message = "\n\nThis model was trained with an old version of fastai and will not work in a CPU environment.\n\nPlease update the fastai library in your training environment and export your mo$
+            raise RuntimeError(message)
+        else:
+            raise
 
 
 def load_image_url(url: str) -> Image:
@@ -106,7 +128,10 @@ def before_request():
     app.jinja_env.cache = {}
 
 
-model = load_model('models')
+loop = asyncio.get_event_loop()
+tasks = [asyncio.ensure_future(setup_learner())]
+learn = loop.run_until_complete(asyncio.gather(*tasks))[0]
+loop.close()
 
 if __name__ == '__main__':
     port = os.environ.get('PORT', 5000)
